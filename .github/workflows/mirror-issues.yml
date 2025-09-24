@@ -2,7 +2,7 @@ name: Mirror issues to DEV
 
 on:
   issues:
-    types: [opened, reopened, closed]
+    types: [opened, reopened, edited, closed]
   issue_comment:
     types: [created]
 
