@@ -2,24 +2,84 @@ name: Mirror issues to DEV
 
 on:
   issues:
-    types: [opened, edited, reopened]
+    types: [opened, edited, reopened, closed, labeled, unlabeled]
+  issue_comment:
+    types: [created, edited, deleted]
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - name: Create issue in DEV
+      - name: Mirror issue to DEV
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_TOKEN }}
           script: |
             const issue = context.payload.issue;
-            const labels = issue.labels.map(l => l.name);
+            const owner = "iSweat-exe";
+            const repo = "AESI-V4-DEV";
+            const originalRef = `[Origine #${issue.number}](${issue.html_url})`;
+            const search = await github.rest.issues.listForRepo({ owner, repo, state: "all" });
+            const existing = search.data.find(i => i.body?.includes(originalRef));
 
-            await github.rest.issues.create({
-              owner: "iSweat-exe",
-              repo: "AESI-V4-DEV",
+            const payload = {
+              owner,
+              repo,
               title: issue.title,
-              body: `Issue originale : [#${issue.number}](${issue.html_url})\n\n---\n\n${issue.body || ""}`,
-              labels
-            });
+              body: `${originalRef}\n\n---\n\n${issue.body || ""}`,
+              labels: issue.labels.map(l => l.name),
+              assignees: issue.assignees.map(a => a.login),
+              milestone: issue.milestone ? issue.milestone.number : null
+            };
+
+            if (existing) {
+              await github.rest.issues.update({
+                ...payload,
+                issue_number: existing.number,
+                state: issue.state === "closed" ? "closed" : "open"
+              });
+            } else {
+              await github.rest.issues.create(payload);
+            }
+
+  mirror_comments:
+    runs-on: ubuntu-latest
+    needs: mirror
+    steps:
+      - name: Mirror comments
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            if (!context.payload.comment) return;
+            const comment = context.payload.comment;
+            const issue = context.payload.issue;
+            const owner = "iSweat-exe";
+            const repo = "AESI-V4-DEV";
+            const originalRef = `[Origine #${issue.number}](${issue.html_url})`;
+
+            const search = await github.rest.issues.listForRepo({ owner, repo, state: "all" });
+            const existing = search.data.find(i => i.body?.includes(originalRef));
+            if (!existing) return;
+
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number: existing.number });
+            const existingComment = comments.data.find(c => c.body.includes(`[Commentaire original de #${issue.number}]`) && c.body.includes(comment.body));
+
+            if (context.eventName === "issue_comment" && context.payload.action === "deleted") {
+              if (existingComment) {
+                await github.rest.issues.deleteComment({
+                  owner,
+                  repo,
+                  comment_id: existingComment.id
+                });
+              }
+            } else {
+              if (!existingComment) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  body: `💬 [Commentaire original de #${issue.number}]\n\n${comment.body}`
+                });
+              }
+            }
