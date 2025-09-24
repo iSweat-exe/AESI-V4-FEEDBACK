@@ -1,0 +1,25 @@
+name: Mirror issues to DEV
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create issue in DEV
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const labels = issue.labels.map(l => l.name);
+
+            await github.rest.issues.create({
+              owner: "iSweat-exe",
+              repo: "AESI-V4-DEV",
+              title: issue.title,
+              body: `Issue originale : [#${issue.number}](${issue.html_url})\n\n---\n\n${issue.body || ""}`,
+              labels
+            });
