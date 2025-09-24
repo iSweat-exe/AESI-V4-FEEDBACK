@@ -2,15 +2,15 @@ name: Mirror issues to DEV
 
 on:
   issues:
-    types: [opened, edited, reopened, closed, labeled, unlabeled]
+    types: [opened, reopened, closed]
   issue_comment:
-    types: [created, edited, deleted]
+    types: [created]
 
 jobs:
-  mirror:
+  mirror_issue:
     runs-on: ubuntu-latest
     steps:
-      - name: Mirror issue to DEV
+      - name: Mirror issue
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_TOKEN }}
@@ -18,33 +18,41 @@ jobs:
             const issue = context.payload.issue;
             const owner = "iSweat-exe";
             const repo = "AESI-V4-DEV";
-            const originalRef = `[Origine #${issue.number}](${issue.html_url})`;
-            const search = await github.rest.issues.listForRepo({ owner, repo, state: "all" });
-            const existing = search.data.find(i => i.body?.includes(originalRef));
+
+            // ID unique pour suivre l'issue dupliquée
+            const MIRROR_ID = `[MIRROR_ID:ISSUE-${issue.number}]`;
+
+            const bodyWithID = `${MIRROR_ID}\n\nOrigine : [#${issue.number}](${issue.html_url})\n\n---\n\n${issue.body || ""}`;
+
+            // Cherche si l'issue existe déjà
+            const existingIssues = await github.rest.issues.listForRepo({ owner, repo, state: "all" });
+            const existing = existingIssues.data.find(i => i.body?.includes(MIRROR_ID));
 
             const payload = {
               owner,
               repo,
               title: issue.title,
-              body: `${originalRef}\n\n---\n\n${issue.body || ""}`,
+              body: bodyWithID,
               labels: issue.labels.map(l => l.name),
               assignees: issue.assignees.map(a => a.login),
               milestone: issue.milestone ? issue.milestone.number : null
             };
 
             if (existing) {
+              // Met à jour l'issue existante
               await github.rest.issues.update({
                 ...payload,
                 issue_number: existing.number,
                 state: issue.state === "closed" ? "closed" : "open"
               });
             } else {
+              // Crée une nouvelle issue
               await github.rest.issues.create(payload);
             }
 
   mirror_comments:
     runs-on: ubuntu-latest
-    needs: mirror
+    needs: mirror_issue
     steps:
       - name: Mirror comments
         uses: actions/github-script@v7
@@ -52,34 +60,25 @@ jobs:
           github-token: ${{ secrets.GH_TOKEN }}
           script: |
             if (!context.payload.comment) return;
+
             const comment = context.payload.comment;
             const issue = context.payload.issue;
             const owner = "iSweat-exe";
             const repo = "AESI-V4-DEV";
-            const originalRef = `[Origine #${issue.number}](${issue.html_url})`;
+            const MIRROR_ID = `[MIRROR_ID:ISSUE-${issue.number}]`;
 
-            const search = await github.rest.issues.listForRepo({ owner, repo, state: "all" });
-            const existing = search.data.find(i => i.body?.includes(originalRef));
+            // Cherche l'issue dupliquée
+            const existingIssues = await github.rest.issues.listForRepo({ owner, repo, state: "all" });
+            const existing = existingIssues.data.find(i => i.body?.includes(MIRROR_ID));
             if (!existing) return;
 
+            // Vérifie si le commentaire existe déjà
             const comments = await github.rest.issues.listComments({ owner, repo, issue_number: existing.number });
-            const existingComment = comments.data.find(c => c.body.includes(`[Commentaire original de #${issue.number}]`) && c.body.includes(comment.body));
-
-            if (context.eventName === "issue_comment" && context.payload.action === "deleted") {
-              if (existingComment) {
-                await github.rest.issues.deleteComment({
-                  owner,
-                  repo,
-                  comment_id: existingComment.id
-                });
-              }
-            } else {
-              if (!existingComment) {
-                await github.rest.issues.createComment({
-                  owner,
-                  repo,
-                  issue_number: existing.number,
-                  body: `💬 [Commentaire original de #${issue.number}]\n\n${comment.body}`
-                });
-              }
+            if (!comments.data.some(c => c.body.includes(comment.id.toString()))) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body: `💬 [Commentaire original #${comment.id} de #${issue.number}]\n\n${comment.body}`
+              });
             }
